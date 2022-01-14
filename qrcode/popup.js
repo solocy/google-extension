@@ -20,18 +20,13 @@ function open() {
         }
     })
 }
-
-
 open();
-
-function skipButton() {
-
-    const input = document.getElementById("input");
-    chrome.tabs.create({"url":input.value})
-
-}
 
 document.getElementById("copy").onclick = copyButton;
 
+function skipButton() {
+    const input = document.getElementById("input");
+    chrome.runtime.sendMessage({cmd: input.value});
+}
 
 document.getElementById("skip").onclick = skipButton;

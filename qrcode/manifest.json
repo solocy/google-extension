@@ -1,12 +1,12 @@
 {
-  "name": "Getting Started Example",
-  "description": "Build an Extension!",
+  "name": "qrcode reader",
+  "description": "qrcode reader!",
   "version": "1.0",
   "manifest_version": 3,
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["activeTab", "scripting","tabs","windows"],
+  "permissions": ["activeTab", "scripting"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
