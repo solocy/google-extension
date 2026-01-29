@@ -13,8 +13,14 @@
       <h2>WebPwd</h2>
     </div>
     <div id="controls">
-      <button id="btn-new-folder">📁 新建文件夹</button>
+      <button id="btn-new-folder">📁 新建</button>
       <label><input type="checkbox" id="auto-fill"> 自动填充</label>
+    </div>
+    <!-- 新建文件夹输入区 -->
+    <div id="new-folder-form" class="new-folder-form" style="display: none;">
+      <input type="text" id="new-folder-input" placeholder="输入文件夹名称..." maxlength="20">
+      <button id="btn-confirm-folder" class="btn-confirm">✓</button>
+      <button id="btn-cancel-folder" class="btn-cancel">✕</button>
     </div>
     <div id="folders"></div>
     <div id="credentials"></div>

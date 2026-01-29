@@ -466,20 +466,46 @@ async function deleteFolder(folderId, folderName) {
   }
 }
 
-async function createFolder() {
-  const name = prompt('请输入文件夹名称:');
-  if (!name) return;
-  await sendMessage({ type: 'createFolder', name });
-  showStatus('文件夹已创建', true);
+// 当前正在创建子文件夹的父ID
+let currentParentId = null;
+
+// 显示新建文件夹输入框
+function showNewFolderForm(parentId = null) {
+  currentParentId = parentId;
+  const form = document.getElementById('new-folder-form');
+  const input = document.getElementById('new-folder-input');
+  form.style.display = 'flex';
+  input.value = '';
+  input.placeholder = parentId ? '输入子文件夹名称...' : '输入文件夹名称...';
+  input.focus();
+}
+
+// 隐藏新建文件夹输入框
+function hideNewFolderForm() {
+  const form = document.getElementById('new-folder-form');
+  form.style.display = 'none';
+  currentParentId = null;
+}
+
+// 确认创建文件夹
+async function confirmCreateFolder() {
+  const input = document.getElementById('new-folder-input');
+  const name = input.value.trim();
+  if (!name) {
+    showStatus('请输入文件夹名称', false);
+    input.focus();
+    return;
+  }
+
+  await sendMessage({ type: 'createFolder', name, parentId: currentParentId });
+  showStatus(currentParentId ? '子文件夹已创建' : '文件夹已创建', true);
+  hideNewFolderForm();
   refresh();
 }
 
-async function createSubFolder(parentId) {
-  const name = prompt('请输入子文件夹名称:');
-  if (!name) return;
-  await sendMessage({ type: 'createFolder', name, parentId });
-  showStatus('子文件夹已创建', true);
-  refresh();
+// 旧函数保留兼容（用于子文件夹按钮）
+function createSubFolder(parentId) {
+  showNewFolderForm(parentId);
 }
 
 async function toggleAutoFill(e) {
@@ -488,7 +514,24 @@ async function toggleAutoFill(e) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('btn-new-folder').addEventListener('click', createFolder);
+  // 新建文件夹按钮 - 显示输入框
+  document.getElementById('btn-new-folder').addEventListener('click', () => showNewFolderForm(null));
+
+  // 确认按钮
+  document.getElementById('btn-confirm-folder').addEventListener('click', confirmCreateFolder);
+
+  // 取消按钮
+  document.getElementById('btn-cancel-folder').addEventListener('click', hideNewFolderForm);
+
+  // 输入框回车确认，ESC取消
+  document.getElementById('new-folder-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      confirmCreateFolder();
+    } else if (e.key === 'Escape') {
+      hideNewFolderForm();
+    }
+  });
+
   document.getElementById('auto-fill').addEventListener('change', toggleAutoFill);
   refresh();
 });

@@ -102,9 +102,15 @@ async function loadPendingAutoFill() {
 function scoreCredential(credential, origin, href) {
   if (!credential) return 0;
   let score = 0;
+
+  // 必须匹配origin才给分，否则返回0
   if (credential.origin && credential.origin === origin) {
     score += 50;
+  } else {
+    // origin不匹配，直接返回0，不进行自动填充
+    return 0;
   }
+
   if (credential.urlPattern) {
     try {
       const target = new URL(credential.urlPattern);
@@ -131,7 +137,8 @@ function pickBestCredential(credentials, origin, href) {
   let bestScore = 0;
   credentials.forEach((c) => {
     const score = scoreCredential(c, origin, href);
-    if (score > bestScore || (score === bestScore && c.updatedAt > (best?.updatedAt || 0))) {
+    // 只有分数大于0才考虑（即origin必须匹配）
+    if (score > 0 && (score > bestScore || (score === bestScore && c.updatedAt > (best?.updatedAt || 0)))) {
       bestScore = score;
       best = c;
     }
@@ -383,40 +390,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: true, settings });
 
     } else if (msg.type === 'reorderFolder') {
-      const { draggedId, targetId, parentId } = msg;
+      const { draggedId, targetId } = msg;
       const db = await getDatabaseWithDefaults();
 
-      // 获取同级文件夹
-      const siblings = db.folders.filter(f => f.parentId === parentId || (!f.parentId && !parentId));
-      const draggedIndex = siblings.findIndex(f => f.id === draggedId);
-      const targetIndex = siblings.findIndex(f => f.id === targetId);
+      // 找到被拖动和目标文件夹
+      const draggedFolder = db.folders.find(f => f.id === draggedId);
+      const targetFolder = db.folders.find(f => f.id === targetId);
 
-      if (draggedIndex !== -1 && targetIndex !== -1) {
-        // 重新计算排序
-        siblings.forEach((f, i) => {
-          const folder = db.folders.find(ff => ff.id === f.id);
-          if (folder) {
-            if (f.id === draggedId) {
-              folder.sortOrder = targetIndex;
-            } else if (draggedIndex < targetIndex) {
-              // 向后拖
-              if (i > draggedIndex && i <= targetIndex) {
-                folder.sortOrder = i - 1;
-              } else {
-                folder.sortOrder = i;
-              }
-            } else {
-              // 向前拖
-              if (i >= targetIndex && i < draggedIndex) {
-                folder.sortOrder = i + 1;
-              } else {
-                folder.sortOrder = i;
-              }
+      if (draggedFolder && targetFolder) {
+        // 获取同级文件夹（相同parentId）
+        const parentId = draggedFolder.parentId;
+        const siblings = db.folders
+          .filter(f => f.parentId === parentId || (!f.parentId && !parentId))
+          .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+        const draggedIndex = siblings.findIndex(f => f.id === draggedId);
+        const targetIndex = siblings.findIndex(f => f.id === targetId);
+
+        if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
+          // 从数组中移除被拖动的项
+          const [removed] = siblings.splice(draggedIndex, 1);
+          // 插入到目标位置
+          siblings.splice(targetIndex, 0, removed);
+
+          // 更新所有同级文件夹的sortOrder
+          siblings.forEach((f, i) => {
+            const folder = db.folders.find(ff => ff.id === f.id);
+            if (folder) {
+              folder.sortOrder = i;
             }
-          }
-        });
+          });
 
-        await saveAll(db.credentials, db.folders, db.settings);
+          await saveAll(db.credentials, db.folders, db.settings);
+        }
       }
       sendResponse({ success: true });
 
@@ -424,31 +430,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { draggedId, targetId, folderId } = msg;
       const db = await getDatabaseWithDefaults();
 
-      // 获取同文件夹下的凭证
-      const siblings = db.credentials.filter(c => c.folderId === folderId);
+      // 获取同文件夹下的凭证并排序
+      const siblings = db.credentials
+        .filter(c => c.folderId === folderId)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
       const draggedIndex = siblings.findIndex(c => c.id === draggedId);
       const targetIndex = siblings.findIndex(c => c.id === targetId);
 
-      if (draggedIndex !== -1 && targetIndex !== -1) {
-        // 重新计算排序
+      if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
+        // 从数组中移除被拖动的项
+        const [removed] = siblings.splice(draggedIndex, 1);
+        // 插入到目标位置
+        siblings.splice(targetIndex, 0, removed);
+
+        // 更新所有同级凭证的sortOrder
         siblings.forEach((c, i) => {
           const cred = db.credentials.find(cc => cc.id === c.id);
           if (cred) {
-            if (c.id === draggedId) {
-              cred.sortOrder = targetIndex;
-            } else if (draggedIndex < targetIndex) {
-              if (i > draggedIndex && i <= targetIndex) {
-                cred.sortOrder = i - 1;
-              } else {
-                cred.sortOrder = i;
-              }
-            } else {
-              if (i >= targetIndex && i < draggedIndex) {
-                cred.sortOrder = i + 1;
-              } else {
-                cred.sortOrder = i;
-              }
-            }
+            cred.sortOrder = i;
           }
         });
 

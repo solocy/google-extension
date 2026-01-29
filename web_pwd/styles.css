@@ -102,6 +102,61 @@ h2 {
   opacity: 0.9;
 }
 
+/* 新建文件夹表单 */
+.new-folder-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  background: #e8f4fd;
+  border-bottom: 1px solid #1a73e8;
+  flex-shrink: 0;
+}
+
+.new-folder-form input {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid #1a73e8;
+  border-radius: 8px;
+  font-size: 12px;
+  outline: none;
+  background: #fff;
+}
+
+.new-folder-form input:focus {
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.new-folder-form .btn-confirm {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: #4caf50;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.new-folder-form .btn-confirm:hover {
+  background: #43a047;
+}
+
+.new-folder-form .btn-cancel {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: #e0e0e0;
+  color: #666;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.new-folder-form .btn-cancel:hover {
+  background: #d0d0d0;
+}
+
 /* 凭证容器 - 可滚动 */
 #credentials {
   flex: 1;
