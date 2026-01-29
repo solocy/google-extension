@@ -34,12 +34,6 @@
       "matches": ["<all_urls>", "file:///*"],
       "js": ["content_script.js"],
       "run_at": "document_start"
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content_script_main.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
     }
   ]
 }

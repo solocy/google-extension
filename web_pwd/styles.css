@@ -1,274 +1,522 @@
-/* styles.css */
+/* styles.css - WebPwd 紧凑样式 */
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
-  padding: 12px;
+  padding: 0;
   width: 380px;
-  max-height: 600px;
-  overflow-y: auto;
+  height: 480px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  overflow: hidden;
 }
 
-h2 {
-  margin: 0 0 12px 0;
-  font-size: 18px;
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #f5f6fa;
+  margin: 5px;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+
+/* 头部标题 - 更紧凑 */
+.app-header {
+  background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+  color: #fff;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-header h2 {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
 }
 
+.app-header .logo {
+  font-size: 16px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* 控制栏 - 更紧凑 */
 #controls {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #e0e0e0;
+  padding: 6px 10px;
+  background: #fff;
+  border-bottom: 1px solid #e8e8e8;
+  flex-shrink: 0;
 }
 
 #controls label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 4px;
+  font-size: 11px;
   cursor: pointer;
-}
-
-#controls button {
-  padding: 6px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-#controls button:hover {
-  background: #f5f5f5;
-}
-
-.folder-chip {
-  display: inline-block;
-  padding: 4px 10px;
-  margin: 2px;
+  color: #555;
+  padding: 4px 8px;
   border-radius: 12px;
   background: #f0f0f0;
-  font-size: 12px;
-  cursor: pointer;
   transition: all 0.2s;
 }
 
-.folder-chip:hover {
+#controls label:hover {
   background: #e0e0e0;
 }
 
-.folder-chip.active {
-  background: #1a73e8;
+#controls input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  accent-color: #1a73e8;
+}
+
+#controls button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%);
   color: #fff;
+  cursor: pointer;
+  font-size: 11px;
   font-weight: 500;
+  transition: all 0.2s;
 }
 
-#folders {
-  margin-bottom: 12px;
-  padding-bottom: 8px;
+#controls button:hover {
+  opacity: 0.9;
 }
 
+/* 凭证容器 - 可滚动 */
+#credentials {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  scroll-behavior: smooth;
+}
+
+#credentials::-webkit-scrollbar {
+  width: 4px;
+}
+
+#credentials::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#credentials::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border-radius: 2px;
+}
+
+/* 文件夹区块 */
 .folder-section {
-  margin-bottom: 12px;
+  margin-bottom: 3px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: transparent;
+  transition: all 0.2s;
 }
 
+.folder-section.dragging {
+  opacity: 0.5;
+}
+
+.folder-section.drag-over > .folder-header {
+  background: #e3f2fd !important;
+  border-color: #1a73e8 !important;
+}
+
+/* 文件夹头部拖放指示 */
+.folder-header.drag-over {
+  background: #e3f2fd !important;
+  border-color: #1a73e8 !important;
+  box-shadow: inset 0 0 0 2px #1a73e8;
+}
+
+/* 文件夹头部 - 紧凑 */
 .folder-header {
-  font-weight: 600;
-  font-size: 14px;
-  color: #333;
-  padding: 8px 10px;
-  background: #f5f5f5;
-  border-radius: 4px;
+  font-weight: 500;
+  font-size: 12px;
+  color: #444;
+  padding: 5px 8px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 5px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   user-select: none;
-  transition: background 0.2s;
+  transition: all 0.15s;
 }
 
 .folder-header:hover {
-  background: #e8e8e8;
+  background: #f8f9fa;
 }
 
+.folder-header.expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+
+/* 文件夹图标 */
+.folder-icon {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* 拖拽手柄 */
+.drag-handle {
+  cursor: grab;
+  color: #ccc;
+  font-size: 9px;
+  padding: 1px;
+  flex-shrink: 0;
+}
+
+.drag-handle:hover {
+  color: #888;
+}
+
+/* 展开箭头 */
 .folder-arrow {
-  font-size: 10px;
-  color: #666;
-  width: 12px;
+  font-size: 7px;
+  color: #999;
+  width: 8px;
+  transition: transform 0.2s;
+  flex-shrink: 0;
 }
 
+.folder-header.expanded .folder-arrow {
+  transform: rotate(0deg);
+}
+
+.folder-header.collapsed .folder-arrow {
+  transform: rotate(-90deg);
+}
+
+/* 文件夹名称 */
 .folder-name {
   flex: 1;
+  font-size: 12px;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* 数量标签 */
 .folder-count {
-  font-size: 12px;
+  font-size: 9px;
   color: #888;
   font-weight: normal;
+  background: #f0f0f0;
+  padding: 1px 5px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+/* 文件夹操作按钮 */
+.folder-actions {
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.folder-header:hover .folder-actions {
+  opacity: 1;
+}
+
+.btn-add-subfolder {
+  padding: 1px 5px;
+  background: #4caf50;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.btn-add-subfolder:hover {
+  background: #43a047;
 }
 
 .btn-delete-folder {
-  padding: 4px 8px;
-  background: #f44336;
+  padding: 1px 5px;
+  background: #e53935;
   color: #fff;
   border: none;
-  border-radius: 3px;
-  font-size: 12px;
+  border-radius: 6px;
+  font-size: 9px;
   cursor: pointer;
-  transition: background 0.2s;
-  margin-left: 8px;
 }
 
 .btn-delete-folder:hover {
-  background: #da190b;
+  background: #d32f2f;
 }
 
+/* 文件夹内容区域 */
 .folder-content {
-  padding-left: 8px;
-  margin-top: 6px;
+  padding: 4px 6px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-top: none;
+  border-bottom-left-radius: 5px;
+  border-bottom-right-radius: 5px;
+}
+
+/* 子文件夹容器 */
+.folder-children {
+  margin: 2px 0 0 12px;
+  padding-left: 6px;
+  border-left: 2px solid #e0e0e0;
+}
+
+/* 多层级文件夹 */
+.folder-section[data-level="1"] > .folder-header,
+.folder-section[data-level="2"] > .folder-header {
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.folder-section[data-level="1"] > .folder-content,
+.folder-section[data-level="2"] > .folder-content {
+  padding: 3px 5px;
 }
 
 .folder-empty {
-  padding: 12px;
-  color: #999;
-  font-size: 12px;
+  padding: 8px;
+  color: #aaa;
+  font-size: 11px;
   text-align: center;
   font-style: italic;
 }
 
+/* 凭证卡片 - 紧凑型 */
 .cred {
-  border: 1px solid #e0e0e0;
-  padding: 10px 12px;
-  margin-bottom: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
   border-radius: 6px;
   background: #fff;
-  transition: box-shadow 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  border-left: 3px solid #1a73e8;
+  cursor: grab;
+}
+
+.cred:last-child {
+  margin-bottom: 0;
 }
 
 .cred:hover {
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.12);
 }
 
+.cred.dragging {
+  opacity: 0.5;
+}
+
+.cred.drag-over {
+  border-left-color: #ff9800;
+  background: #fff8e1;
+}
+
+/* 凭证标题 */
 .cred-title {
   font-weight: 600;
-  font-size: 14px;
-  color: #333;
+  font-size: 12px;
+  color: #1a1a1a;
+  margin-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+}
+
+/* 用户名 */
+.cred-username {
+  color: #1a73e8;
+  font-size: 11px;
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cred-username {
-  color: #666;
-  font-size: 12px;
-  margin-bottom: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.cred-username::before {
+  content: '👤 ';
+  font-size: 9px;
 }
 
+/* 密码行 - 紧凑 */
+.cred-password-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+  background: #f5f6fa;
+  border-radius: 4px;
+}
+
+.cred-password-label {
+  font-size: 10px;
+}
+
+.cred-password-label::before {
+  content: '🔒 ';
+  font-size: 9px;
+}
+
+.cred-password-value {
+  color: #333;
+  font-family: monospace;
+  background: #fff;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  border: 1px solid #e0e0e0;
+}
+
+.btn-toggle-pwd,
+.btn-edit-pwd {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 8px;
+  background: #e8e8e8;
+  cursor: pointer;
+  font-size: 9px;
+  color: #555;
+}
+
+.btn-toggle-pwd:hover {
+  background: #d0d0d0;
+}
+
+.btn-edit-pwd {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.btn-edit-pwd:hover {
+  background: #bbdefb;
+}
+
+/* 操作按钮 - 紧凑 */
 .cred-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
 .cred-actions button {
-  padding: 4px 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 12px;
-  transition: all 0.2s;
-}
-
-.cred-actions button:hover {
-  background: #f0f0f0;
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .cred-actions .btn-fill {
   background: #4caf50;
   color: #fff;
-  border-color: #4caf50;
-}
-
-.cred-actions .btn-fill:hover {
-  background: #45a049;
 }
 
 .cred-actions .btn-fill-login {
   background: #2196f3;
   color: #fff;
-  border-color: #2196f3;
-}
-
-.cred-actions .btn-fill-login:hover {
-  background: #0b7dda;
 }
 
 .cred-actions .btn-open {
   background: #ff9800;
   color: #fff;
-  border-color: #ff9800;
-}
-
-.cred-actions .btn-open:hover {
-  background: #e68900;
 }
 
 .cred-actions .btn-delete {
   background: #f44336;
   color: #fff;
-  border-color: #f44336;
 }
 
-.cred-actions .btn-delete:hover {
-  background: #da190b;
-}
-
+/* 状态栏 */
 #status {
-  min-height: 20px;
-  margin-top: 8px;
-  padding: 6px;
+  min-height: 16px;
+  padding: 4px 10px;
   text-align: center;
-  font-size: 13px;
+  font-size: 11px;
   color: #4caf50;
   font-weight: 500;
+  background: #fff;
+  border-top: 1px solid #e8e8e8;
+  flex-shrink: 0;
 }
 
+/* 空状态 */
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
+  padding: 30px 15px;
   color: #999;
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.empty-state::before {
+  content: '📁';
+  font-size: 28px;
+  display: block;
+  margin-bottom: 8px;
 }
 
 .empty-state small {
   display: block;
-  margin-top: 8px;
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 11px;
   color: #bbb;
 }
 
-.folder-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+/* 标题tooltip */
+.cred-title[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 3px;
+  padding: 4px 8px;
+  background: #333;
+  color: #fff;
+  font-size: 9px;
+  font-weight: normal;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 1000;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* 隐藏遗留元素 */
+.folder-chip,
+#folders,
+.folder-list,
 .folder-item {
-  padding: 4px 10px;
-  background: #f5f5f5;
-  border-radius: 12px;
-  font-size: 12px;
-  color: #666;
+  display: none;
 }
-
-.folder-count {
-  color: #999;
-}
-

@@ -20,7 +20,7 @@ function uuid() {
 }
 
 function createDefaultFolder() {
-  return { id: uuid(), name: '默认', color: '#4caf50', createdAt: Date.now() };
+  return { id: uuid(), name: '默认', parentId: null, color: '#4caf50', createdAt: Date.now() };
 }
 
 async function loadBaseStorage() {
@@ -310,8 +310,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     } else if (msg.type === 'createFolder') {
       const name = msg.name || 'New';
+      const parentId = msg.parentId || null; // 支持指定父文件夹
       const db = await getDatabaseWithDefaults();
-      const folder = { id: uuid(), name, color: null, createdAt: Date.now() };
+      const folder = { id: uuid(), name, parentId, color: null, createdAt: Date.now() };
       db.folders.push(folder);
       await saveAll(db.credentials, db.folders, db.settings);
       sendResponse({ folder });
@@ -322,25 +323,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       // 防止删除默认文件夹
       const folderToDelete = db.folders.find(f => f.id === folderId);
-      if (folderToDelete && folderToDelete.name === '默认') {
+      if (folderToDelete && folderToDelete.name === '默认' && !folderToDelete.parentId) {
         sendResponse({ success: false, error: '无法删除默认文件夹' });
         return;
       }
 
+      // 递归获取所有子文件夹ID
+      function getDescendantFolderIds(parentId, folders) {
+        const ids = [parentId];
+        folders.filter(f => f.parentId === parentId).forEach(child => {
+          ids.push(...getDescendantFolderIds(child.id, folders));
+        });
+        return ids;
+      }
+      const folderIdsToDelete = getDescendantFolderIds(folderId, db.folders);
+
       // 获取默认文件夹ID
-      const defaultFolder = db.folders.find(f => f.name === '默认');
+      const defaultFolder = db.folders.find(f => f.name === '默认' && !f.parentId);
       const defaultFolderId = defaultFolder ? defaultFolder.id : (db.folders[0] && db.folders[0].id);
 
-      // 将该文件夹下的凭证移到默认文件夹
+      // 将该文件夹及子文件夹下的凭证移到默认文件夹
       const updatedCreds = db.credentials.map(c => {
-        if (c.folderId === folderId) {
+        if (folderIdsToDelete.includes(c.folderId)) {
           return Object.assign({}, c, { folderId: defaultFolderId, updatedAt: Date.now() });
         }
         return c;
       });
 
-      // 删除文件夹
-      const updatedFolders = db.folders.filter(f => f.id !== folderId);
+      // 删除文件夹及其所有子文件夹
+      const updatedFolders = db.folders.filter(f => !folderIdsToDelete.includes(f.id));
 
       await saveAll(updatedCreds, updatedFolders, db.settings);
       sendResponse({ success: true });
@@ -370,6 +381,80 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const settings = Object.assign(db.settings || {}, msg.settings || {});
       await saveAll(db.credentials, db.folders, settings);
       sendResponse({ success: true, settings });
+
+    } else if (msg.type === 'reorderFolder') {
+      const { draggedId, targetId, parentId } = msg;
+      const db = await getDatabaseWithDefaults();
+
+      // 获取同级文件夹
+      const siblings = db.folders.filter(f => f.parentId === parentId || (!f.parentId && !parentId));
+      const draggedIndex = siblings.findIndex(f => f.id === draggedId);
+      const targetIndex = siblings.findIndex(f => f.id === targetId);
+
+      if (draggedIndex !== -1 && targetIndex !== -1) {
+        // 重新计算排序
+        siblings.forEach((f, i) => {
+          const folder = db.folders.find(ff => ff.id === f.id);
+          if (folder) {
+            if (f.id === draggedId) {
+              folder.sortOrder = targetIndex;
+            } else if (draggedIndex < targetIndex) {
+              // 向后拖
+              if (i > draggedIndex && i <= targetIndex) {
+                folder.sortOrder = i - 1;
+              } else {
+                folder.sortOrder = i;
+              }
+            } else {
+              // 向前拖
+              if (i >= targetIndex && i < draggedIndex) {
+                folder.sortOrder = i + 1;
+              } else {
+                folder.sortOrder = i;
+              }
+            }
+          }
+        });
+
+        await saveAll(db.credentials, db.folders, db.settings);
+      }
+      sendResponse({ success: true });
+
+    } else if (msg.type === 'reorderCredential') {
+      const { draggedId, targetId, folderId } = msg;
+      const db = await getDatabaseWithDefaults();
+
+      // 获取同文件夹下的凭证
+      const siblings = db.credentials.filter(c => c.folderId === folderId);
+      const draggedIndex = siblings.findIndex(c => c.id === draggedId);
+      const targetIndex = siblings.findIndex(c => c.id === targetId);
+
+      if (draggedIndex !== -1 && targetIndex !== -1) {
+        // 重新计算排序
+        siblings.forEach((c, i) => {
+          const cred = db.credentials.find(cc => cc.id === c.id);
+          if (cred) {
+            if (c.id === draggedId) {
+              cred.sortOrder = targetIndex;
+            } else if (draggedIndex < targetIndex) {
+              if (i > draggedIndex && i <= targetIndex) {
+                cred.sortOrder = i - 1;
+              } else {
+                cred.sortOrder = i;
+              }
+            } else {
+              if (i >= targetIndex && i < draggedIndex) {
+                cred.sortOrder = i + 1;
+              } else {
+                cred.sortOrder = i;
+              }
+            }
+          }
+        });
+
+        await saveAll(db.credentials, db.folders, db.settings);
+      }
+      sendResponse({ success: true });
     }
   })();
   return true;

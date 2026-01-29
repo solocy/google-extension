@@ -1,6 +1,6 @@
 // content_script.js
-// Detect form submit with password field, capture username/password and send to background
-// 注意：fetch/XHR 拦截已移至 content_script_main.js（运行在MAIN世界中）
+// 检测表单提交，从密码输入框直接捕获用户名/密码，发送到后台保存
+// 支持自动填充已保存的登录信息
 
 (function () {
     let autoFillAttempted = false;
@@ -189,12 +189,32 @@
 
         const folderSelect = document.createElement('select');
         folderSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;';
-        folders.forEach(folder => {
+
+        // 构建文件夹树形结构用于下拉框显示
+        const folderMap = {};
+        folders.forEach(f => {
+            folderMap[f.id] = { folder: f, children: [] };
+        });
+        const rootFolders = [];
+        folders.forEach(f => {
+            if (f.parentId && folderMap[f.parentId]) {
+                folderMap[f.parentId].children.push(folderMap[f.id]);
+            } else {
+                rootFolders.push(folderMap[f.id]);
+            }
+        });
+
+        // 递归添加选项，带缩进
+        function addFolderOptions(folderData, level) {
+            const { folder, children } = folderData;
             const option = document.createElement('option');
             option.value = folder.id;
-            option.textContent = folder.name;
+            option.textContent = '　'.repeat(level) + (level > 0 ? '└ ' : '') + folder.name;
             folderSelect.appendChild(option);
-        });
+            children.forEach(child => addFolderOptions(child, level + 1));
+        }
+        rootFolders.forEach(f => addFolderOptions(f, 0));
+
         folderGroup.appendChild(folderSelect);
         banner.appendChild(folderGroup);
 
@@ -387,111 +407,6 @@
         }
     }, true);
 
-    function checkFormDataForPassword(formData, url) {
-        try {
-            let username = '';
-            let password = '';
-
-            // FormData.entries() 用于获取所有字段
-            for (let [key, value] of formData.entries()) {
-                const keyLower = key.toLowerCase();
-                if (keyLower.includes('password') || keyLower.includes('pass') || keyLower.includes('pwd')) {
-                    password = value;
-                }
-                if (keyLower.includes('user') || keyLower.includes('account') || keyLower.includes('login') ||
-                    keyLower.includes('email') || keyLower.includes('name') || keyLower.includes('account')) {
-                    username = value;
-                }
-            }
-
-            if (password) {
-                handlePasswordDetected(username, password, url);
-            }
-        } catch (err) {
-            // FormData 处理错误
-        }
-    }
-
-    function checkUrlEncodedData(data, url) {
-        try {
-            let params;
-            try {
-                params = new URLSearchParams(data);
-            } catch (e) {
-                params = new Map();
-                const pairs = data.split('&');
-                pairs.forEach(pair => {
-                    const [key, value] = pair.split('=');
-                    if (key && value) {
-                        try {
-                            params.set(decodeURIComponent(key), decodeURIComponent(value));
-                        } catch (e) {
-                            params.set(key, value);
-                        }
-                    }
-                });
-            }
-
-            let username = '';
-            let password = '';
-
-            for (let [key, value] of params.entries()) {
-                const keyLower = key.toLowerCase();
-                if (keyLower.includes('password') || keyLower.includes('pass') || keyLower.includes('pwd')) {
-                    password = value;
-                }
-                if (keyLower.includes('user') || keyLower.includes('account') || keyLower.includes('login') ||
-                    keyLower.includes('email') || keyLower.includes('name') || keyLower.includes('phone')) {
-                    username = value;
-                }
-            }
-
-            if (password) {
-                handlePasswordDetected(username, password, url);
-            }
-        } catch (err) {
-            // URL Encoded 处理错误
-        }
-    }
-
-    function handlePasswordDetected(username, password, url) {
-        if (!password) return;
-        if (document.getElementById('webpwd-save-banner')) return;
-
-        const cacheKey = `${window.location.origin}|${username}`;
-        if (window._webpwd_last_submit === cacheKey) return;
-        window._webpwd_last_submit = cacheKey;
-
-        setTimeout(() => {
-            if (window._webpwd_last_submit === cacheKey) {
-                window._webpwd_last_submit = null;
-            }
-        }, 10000);
-
-        pendingCredential = {
-            type: 'loginDetected',
-            origin: window.location.origin,
-            url: window.location.href,
-            username: username,
-            password: password,
-            title: document.title || new URL(window.location.href).hostname,
-            formSelector: null,
-            usernameSelector: null,
-            passwordSelector: null
-        };
-
-        chrome.runtime.sendMessage({type: 'loginDetected', ...pendingCredential}, (response) => {
-            if (chrome.runtime.lastError) return;
-            if (response) {
-                if (response.isDuplicate) return;
-                if (response.folders) {
-                    pendingCredential.hasConflict = response.hasConflict;
-                    showSaveBanner(pendingCredential, response.folders);
-                }
-            }
-        });
-    }
-
     function tryAutoFill() {
         if (autoFillAttempted) return;
         autoFillAttempted = true;
@@ -588,31 +503,5 @@
         setTimeout(tryAutoFill, 300);
     }
 
-    // 监听来自 MAIN world (content_script_main.js) 的凭证检测事件
-    window.addEventListener('webpwd-credential-detected', (event) => {
-        try {
-            const { username, password, url } = event.detail;
-            handlePasswordDetected(username, password, url);
-        } catch (err) {
-            // 事件处理错误
-        }
-    });
-
-    // 保留旧的事件监听（兼容性）
-    window.addEventListener('webpwd-form-data', (event) => {
-        try {
-            checkFormDataForPassword(event.detail.body, event.detail.url);
-        } catch (err) {
-            // FormData 事件处理错误
-        }
-    });
-
-    window.addEventListener('webpwd-url-encoded', (event) => {
-        try {
-            checkUrlEncodedData(event.detail.body, event.detail.url);
-        } catch (err) {
-            // URL Encoded 事件处理错误
-        }
-    });
 
 })();
