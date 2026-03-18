@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Markdown Viewer",
+  "version": "1.0.0",
+  "description": "在浏览器中优雅地查看Markdown文件",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["file:///*", "http://*/*", "https://*/*"],
+      "js": ["marked.min.js", "highlight.min.js", "content.js"],
+      "css": ["styles.css", "highlight.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "permissions": [
+    "storage"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["styles.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
