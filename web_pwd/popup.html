@@ -10,11 +10,17 @@
   <div id="app">
     <div class="app-header">
       <span class="logo">🔐</span>
-      <h2>WebPwd</h2>
+      <h2 id="app-title">WebPwd</h2>
     </div>
     <div id="controls">
       <button id="btn-new-folder">📁 新建</button>
-      <label><input type="checkbox" id="auto-fill"> 自动填充</label>
+      <label><input type="checkbox" id="auto-fill"><span id="auto-fill-label">自动填充</span></label>
+      <label class="language-control" for="language-select"><span id="language-label">语言</span>
+        <select id="language-select">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </label>
     </div>
     <!-- 新建文件夹输入区 -->
     <div id="new-folder-form" class="new-folder-form" style="display: none;">

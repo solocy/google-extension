@@ -5,11 +5,13 @@ const STORAGE_KEYS = {
   CREDENTIALS: 'webpwd_credentials',
   FOLDERS: 'webpwd_folders',
   SETTINGS: 'webpwd_settings',
-  PENDING_FILL: 'webpwd_pending_fill'
+  PENDING_FILL: 'webpwd_pending_fill',
+  PENDING_SAVE: 'webpwd_pending_save'
 };
 
-const DEFAULT_SETTINGS = { autoFillEnabled: true };
+const DEFAULT_SETTINGS = { autoFillEnabled: true, language: 'zh' };
 const pendingAutoFill = new Map(); // tabId -> {credential, submit}
+const pendingSave = new Map(); // promptId -> {credential, folders, hasConflict, windowId, expiresAt, timeoutHandle}
 
 function uuid() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -21,6 +23,57 @@ function uuid() {
 
 function createDefaultFolder() {
   return { id: uuid(), name: '默认', parentId: null, color: '#4caf50', createdAt: Date.now() };
+}
+
+function normalizeLanguage(language) {
+  return language === 'en' ? 'en' : 'zh';
+}
+
+function normalizeLoginUrl(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch (err) {
+    return rawUrl;
+  }
+}
+
+function getPageOrigin(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    return new URL(rawUrl).origin;
+  } catch (err) {
+    return rawUrl;
+  }
+}
+
+function getCredentialLoginUrl(credential) {
+  return normalizeLoginUrl(credential?.urlPattern || '');
+}
+
+function isCredentialMatchedPage(credential, pageUrl, origin) {
+  const normalizedPageUrl = normalizeLoginUrl(pageUrl);
+  if (credential.urlPattern) {
+    return getCredentialLoginUrl(credential) === normalizedPageUrl;
+  }
+  return !!origin && credential.origin === origin;
+}
+
+function sortCredentialsForPage(credentials) {
+  return [...credentials].sort((left, right) => {
+    const leftOrder = typeof left.sortOrder === 'number' ? left.sortOrder : Number.MAX_SAFE_INTEGER;
+    const rightOrder = typeof right.sortOrder === 'number' ? right.sortOrder : Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return (left.createdAt || 0) - (right.createdAt || 0);
+  });
+}
+
+function getCredentialsForPage(credentials, pageUrl, origin) {
+  return sortCredentialsForPage(credentials.filter((credential) => isCredentialMatchedPage(credential, pageUrl, origin)));
 }
 
 async function loadBaseStorage() {
@@ -48,7 +101,9 @@ async function getDatabaseWithDefaults() {
   const raw = await loadBaseStorage();
   let folders = raw.folders;
   const storedSettings = raw.settings || {};
-  const settings = Object.assign({}, DEFAULT_SETTINGS, storedSettings);
+  const settings = Object.assign({}, DEFAULT_SETTINGS, storedSettings, {
+    language: normalizeLanguage(storedSettings.language)
+  });
   let needsSave = false;
 
   if (!folders.length) {
@@ -56,6 +111,9 @@ async function getDatabaseWithDefaults() {
     needsSave = true;
   }
   if (typeof storedSettings.autoFillEnabled !== 'boolean') {
+    needsSave = true;
+  }
+  if (normalizeLanguage(storedSettings.language) !== storedSettings.language) {
     needsSave = true;
   }
   if (needsSave) {
@@ -80,6 +138,20 @@ async function persistPendingAutoFill() {
   return new Promise((resolve) => chrome.storage.local.set({ [STORAGE_KEYS.PENDING_FILL]: snapshot }, resolve));
 }
 
+async function persistPendingSave() {
+  const snapshot = {};
+  pendingSave.forEach((value, promptId) => {
+    snapshot[promptId] = {
+      credential: value.credential,
+      folders: value.folders,
+      hasConflict: value.hasConflict,
+      windowId: value.windowId || null,
+      expiresAt: value.expiresAt || null
+    };
+  });
+  return new Promise((resolve) => chrome.storage.local.set({ [STORAGE_KEYS.PENDING_SAVE]: snapshot }, resolve));
+}
+
 async function loadPendingAutoFill() {
   const data = await new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEYS.PENDING_FILL], (res) => {
@@ -102,12 +174,17 @@ async function loadPendingAutoFill() {
 function scoreCredential(credential, origin, href) {
   if (!credential) return 0;
   let score = 0;
+  const normalizedHref = normalizeLoginUrl(href);
 
-  // 必须匹配origin才给分，否则返回0
-  if (credential.origin && credential.origin === origin) {
-    score += 50;
+  if (credential.urlPattern) {
+    if (getCredentialLoginUrl(credential) === normalizedHref) {
+      score += 100;
+    } else {
+      return 0;
+    }
+  } else if (credential.origin && credential.origin === origin) {
+    score += 10;
   } else {
-    // origin不匹配，直接返回0，不进行自动填充
     return 0;
   }
 
@@ -147,25 +224,237 @@ function pickBestCredential(credentials, origin, href) {
 }
 
 // 检查是否已保存相同的凭证（同一账号同一密码）
-function findDuplicateCredential(credentials, username, password, origin) {
+function findDuplicateCredential(credentials, username, password, pageUrl, origin) {
   return credentials.find(c =>
     c.username === username &&
     c.password === password &&
-    c.origin === origin
+    isCredentialMatchedPage(c, pageUrl, origin)
   );
 }
 
-// 检查是否存在相同账号但不同密码
-function findConflictingCredential(credentials, username, password, origin) {
+function findAccountCredential(credentials, username, pageUrl, origin) {
+  return credentials.find(c =>
+    c.username === username &&
+    isCredentialMatchedPage(c, pageUrl, origin)
+  );
+}
+
+
+async function loadPendingSave() {
+  const data = await new Promise((resolve) => {
+    chrome.storage.local.get([STORAGE_KEYS.PENDING_SAVE], (res) => {
+      if (!res || typeof res !== 'object') {
+        resolve({});
+        return;
+      }
+      resolve(res[STORAGE_KEYS.PENDING_SAVE] || {});
+    });
+  });
+  pendingSave.clear();
+  if (data && typeof data === 'object') {
+    Object.entries(data).forEach(([promptId, info]) => {
+      pendingSave.set(promptId, Object.assign({}, info, { timeoutHandle: null }));
+    });
+  }
+}
+
+function clearPendingSaveTimeout(entry) {
+  if (!entry || !entry.timeoutHandle) return;
+  clearTimeout(entry.timeoutHandle);
+  entry.timeoutHandle = null;
+}
+
+async function cleanupPendingSave(promptId, shouldCloseWindow) {
+  const entry = pendingSave.get(promptId);
+  if (!entry) return;
+
+  clearPendingSaveTimeout(entry);
+  pendingSave.delete(promptId);
+  await persistPendingSave();
+
+  if (shouldCloseWindow && typeof entry.windowId === 'number') {
+    await new Promise((resolve) => {
+      chrome.windows.remove(entry.windowId, () => {
+        resolve();
+      });
+    });
+  }
+}
+
+function schedulePendingSaveTimeout(promptId) {
+  const entry = pendingSave.get(promptId);
+  if (!entry) return;
+
+  clearPendingSaveTimeout(entry);
+
+  const remainingMs = Math.max(0, (entry.expiresAt || Date.now()) - Date.now());
+  entry.timeoutHandle = setTimeout(() => {
+    cleanupPendingSave(promptId, true).catch(() => {
+      // 忽略自动关闭失败
+    });
+  }, remainingMs);
+}
+
+async function getPopupBounds(anchorWindowId) {
+  const fallbackBounds = {
+    width: 360,
+    height: 280
+  };
+
+  if (typeof anchorWindowId !== 'number') {
+    return fallbackBounds;
+  }
+
+  const anchorWindow = await new Promise((resolve) => {
+    chrome.windows.get(anchorWindowId, {}, (win) => {
+      if (chrome.runtime.lastError || !win) {
+        resolve(null);
+        return;
+      }
+      resolve(win);
+    });
+  });
+
+  if (!anchorWindow) {
+    return fallbackBounds;
+  }
+
+  const width = 360;
+  const height = 280;
+  const marginRight = 24;
+  const marginBottom = 72;
+  const left = Math.max(0, (anchorWindow.left || 0) + Math.max(0, (anchorWindow.width || width) - width - marginRight));
+  const top = Math.max(0, (anchorWindow.top || 0) + Math.max(0, (anchorWindow.height || height) - height - marginBottom));
+
+  return {
+    width,
+    height,
+    left,
+    top
+  };
+}
+
+async function createSavePrompt(credential, folders, hasConflict, anchorWindowId) {
+  const promptId = uuid();
+  const expiresAt = Date.now() + 5000;
+
+  pendingSave.set(promptId, {
+    credential,
+    folders,
+    hasConflict,
+    windowId: null,
+    expiresAt,
+    timeoutHandle: null
+  });
+  await persistPendingSave();
+
+  const popupUrl = chrome.runtime.getURL(`save_prompt.html?promptId=${encodeURIComponent(promptId)}`);
+  const popupBounds = await getPopupBounds(anchorWindowId);
+  let createdWindow;
+  try {
+    createdWindow = await new Promise((resolve, reject) => {
+      chrome.windows.create({
+        url: popupUrl,
+        type: 'popup',
+        width: popupBounds.width,
+        height: popupBounds.height,
+        left: popupBounds.left,
+        top: popupBounds.top,
+        focused: false
+      }, (win) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(win);
+      });
+    });
+  } catch (err) {
+    pendingSave.delete(promptId);
+    await persistPendingSave();
+    throw err;
+  }
+
+  const entry = pendingSave.get(promptId);
+  if (!entry) {
+    return { promptId, expiresAt };
+  }
+
+  entry.windowId = createdWindow && typeof createdWindow.id === 'number' ? createdWindow.id : null;
+  await persistPendingSave();
+  schedulePendingSaveTimeout(promptId);
+
+  return { promptId, expiresAt, windowId: entry.windowId };
+}
+
+async function storeCredentialEntry(payload) {
+  const db = await getDatabaseWithDefaults();
+  const creds = db.credentials;
+  const normalizedUrl = normalizeLoginUrl(payload.url || payload.urlPattern || '');
+  const origin = payload.origin || getPageOrigin(normalizedUrl);
+  const existingIndex = creds.findIndex((credential) => (
+    credential.username === payload.username &&
+    isCredentialMatchedPage(credential, normalizedUrl, origin)
+  ));
+
+  if (existingIndex !== -1) {
+    const current = creds[existingIndex];
+    const updatedEntry = Object.assign({}, current, {
+      title: payload.title || current.title || origin,
+      username: payload.username,
+      password: payload.password,
+      origin,
+      urlPattern: normalizedUrl || current.urlPattern || null,
+      formSelector: payload.formSelector || current.formSelector || null,
+      usernameSelector: payload.usernameSelector || current.usernameSelector || null,
+      passwordSelector: payload.passwordSelector || current.passwordSelector || null,
+      tags: Array.isArray(payload.tags) ? payload.tags.filter(Boolean) : (current.tags || []),
+      folderId: payload.folderId || current.folderId || (db.folders[0] && db.folders[0].id) || null,
+      updatedAt: Date.now()
+    });
+    creds[existingIndex] = updatedEntry;
+    await saveAll(creds, db.folders, db.settings);
+    return updatedEntry;
+  }
+
+  const entry = {
+    id: uuid(),
+    title: payload.title || origin,
+    username: payload.username,
+    password: payload.password,
+    origin,
+    urlPattern: normalizedUrl || null,
+    formSelector: payload.formSelector || null,
+    usernameSelector: payload.usernameSelector || null,
+    passwordSelector: payload.passwordSelector || null,
+    tags: Array.isArray(payload.tags) ? payload.tags.filter(Boolean) : [],
+    folderId: payload.folderId || (db.folders[0] && db.folders[0].id) || null,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  creds.push(entry);
+  await saveAll(creds, db.folders, db.settings);
+  return entry;
+}
+// 检查是否存在同一登录页、同一账号但不同密码
+function findConflictingCredential(credentials, username, password, pageUrl, origin) {
   return credentials.find(c =>
     c.username === username &&
     c.password !== password &&
-    c.origin === origin
+    isCredentialMatchedPage(c, pageUrl, origin)
   );
 }
 
 // Load pending fills on startup
 loadPendingAutoFill().catch(() => {
+  // 加载失败时继续运行，不阻止扩展功能
+});
+
+loadPendingSave().then(() => {
+  pendingSave.forEach((_, promptId) => {
+    schedulePendingSaveTimeout(promptId);
+  });
+}).catch(() => {
   // 加载失败时继续运行，不阻止扩展功能
 });
 
@@ -197,6 +486,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   persistPendingAutoFill();
 });
 
+chrome.windows.onRemoved.addListener((windowId) => {
+  for (const [promptId, entry] of pendingSave.entries()) {
+    if (entry.windowId === windowId) {
+      cleanupPendingSave(promptId, false).catch(() => {
+        // 忽略清理失败
+      });
+      break;
+    }
+  }
+});
+
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
   getDatabaseWithDefaults();
@@ -213,58 +513,92 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (!msg || !msg.type) return;
 
-    if (msg.type === 'loginDetected') {
+    if (msg.type === 'showSaveNotification') {
+      try {
+        const promptInfo = await createSavePrompt(msg.credential, msg.folders, msg.hasConflict, sender.tab && sender.tab.windowId);
+        sendResponse({ success: true, promptId: promptInfo.promptId, expiresAt: promptInfo.expiresAt });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+
+    } else if (msg.type === 'loginDetected') {
       const db = await getDatabaseWithDefaults();
       const username = msg.username || '';
       const password = msg.password || '';
-      const origin = msg.origin || '';
+      const pageUrl = normalizeLoginUrl(msg.url || '');
+      const origin = msg.origin || getPageOrigin(pageUrl);
 
       // 检查是否已保存相同的凭证（同一账号同一密码）
-      const duplicate = findDuplicateCredential(db.credentials, username, password, origin);
+      const duplicate = findDuplicateCredential(db.credentials, username, password, pageUrl, origin);
       if (duplicate) {
         // 相同凭证，不弹窗，直接响应
         sendResponse({
           acknowledged: true,
           isDuplicate: true,
-          folders: db.folders
+          folders: db.folders,
+          settings: db.settings
         });
         return;
       }
 
       // 检查是否存在相同账号但密码不同
-      const conflict = findConflictingCredential(db.credentials, username, password, origin);
+      const conflict = findConflictingCredential(db.credentials, username, password, pageUrl, origin);
 
       // 正常弹窗
       sendResponse({
         acknowledged: true,
         isDuplicate: false,
         hasConflict: !!conflict,
-        folders: db.folders
+        folders: db.folders,
+        settings: db.settings,
+        existingCredential: conflict || findAccountCredential(db.credentials, username, pageUrl, origin) || null
       });
 
 
     } else if (msg.type === 'storeCredential') {
       const payload = msg.credential;
-      const db = await getDatabaseWithDefaults();
-      const creds = db.credentials;
-      const entry = {
-        id: uuid(),
-        title: payload.title || payload.origin,
-        username: payload.username,
-        password: payload.password,
-        origin: payload.origin,
-        urlPattern: payload.url || null,
-        formSelector: payload.formSelector || null,
-        usernameSelector: payload.usernameSelector || null,
-        passwordSelector: payload.passwordSelector || null,
-        tags: Array.isArray(payload.tags) ? payload.tags.filter(Boolean) : [],
-        folderId: payload.folderId || (db.folders[0] && db.folders[0].id) || null,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      creds.push(entry);
-      await saveAll(creds, db.folders, db.settings);
+      const entry = await storeCredentialEntry(payload);
       sendResponse({ success: true, entry });
+
+    } else if (msg.type === 'getPendingSavePrompt') {
+      const entry = pendingSave.get(msg.promptId);
+      if (!entry) {
+        sendResponse({ success: false, error: 'prompt_not_found' });
+        return;
+      }
+      sendResponse({
+        success: true,
+        prompt: {
+          credential: entry.credential,
+          folders: entry.folders,
+          hasConflict: entry.hasConflict,
+          expiresAt: entry.expiresAt
+        }
+      });
+
+    } else if (msg.type === 'resolvePendingSavePrompt') {
+      const promptId = msg.promptId;
+      const action = msg.action;
+      const entry = pendingSave.get(promptId);
+
+      if (!entry) {
+        sendResponse({ success: false, error: 'prompt_not_found' });
+        return;
+      }
+
+      if (action === 'save') {
+        const credential = Object.assign({}, entry.credential, {
+          folderId: msg.folderId || (entry.folders[0] && entry.folders[0].id) || null,
+          title: (msg.title || '').trim() || entry.credential.title || entry.credential.origin
+        });
+        const savedEntry = await storeCredentialEntry(credential);
+        await cleanupPendingSave(promptId, true);
+        sendResponse({ success: true, saved: true, entry: savedEntry });
+        return;
+      }
+
+      await cleanupPendingSave(promptId, true);
+      sendResponse({ success: true, saved: false });
 
     } else if (msg.type === 'listCredentials') {
       const db = await getDatabaseWithDefaults();
@@ -279,10 +613,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const best = pickBestCredential(db.credentials, msg.origin, msg.url);
       sendResponse({ credential: best, settings: db.settings });
 
-    } else if (msg.type === 'getCredentialsForOrigin') {
-      const origin = msg.origin;
+    } else if (msg.type === 'findCredentialsForPage') {
       const db = await getDatabaseWithDefaults();
-      const matches = db.credentials.filter((c) => c.origin === origin || (c.urlPattern && origin === new URL(c.urlPattern, origin).origin));
+      const pageUrl = normalizeLoginUrl(msg.url || '');
+      const origin = msg.origin || getPageOrigin(pageUrl);
+      const credentials = getCredentialsForPage(db.credentials, pageUrl, origin);
+      sendResponse({ credentials, settings: db.settings });
+
+    } else if (msg.type === 'getCredentialsForOrigin') {
+      const pageUrl = normalizeLoginUrl(msg.url || '');
+      const origin = msg.origin || getPageOrigin(pageUrl);
+      const db = await getDatabaseWithDefaults();
+      const matches = getCredentialsForPage(db.credentials, pageUrl, origin);
       sendResponse({ credentials: matches });
 
     } else if (msg.type === 'fillRequest') {
@@ -385,7 +727,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     } else if (msg.type === 'updateSettings') {
       const db = await getDatabaseWithDefaults();
-      const settings = Object.assign(db.settings || {}, msg.settings || {});
+      const settings = Object.assign(db.settings || {}, msg.settings || {}, {
+        language: normalizeLanguage((msg.settings || {}).language ?? db.settings?.language)
+      });
       await saveAll(db.credentials, db.folders, settings);
       sendResponse({ success: true, settings });
 

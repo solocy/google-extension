@@ -76,6 +76,22 @@ h2 {
   transition: all 0.2s;
 }
 
+#controls .language-control {
+  margin-left: auto;
+  gap: 6px;
+  padding-right: 6px;
+}
+
+#language-select {
+  height: 22px;
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font-size: 11px;
+  outline: none;
+}
+
 #controls label:hover {
   background: #e0e0e0;
 }
@@ -417,6 +433,16 @@ h2 {
   white-space: nowrap;
 }
 
+.cred-page-url {
+  color: #7a8699;
+  font-size: 10px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+}
+
 .cred-username::before {
   content: '👤 ';
   font-size: 9px;
@@ -549,7 +575,8 @@ h2 {
 }
 
 /* 标题tooltip */
-.cred-title[title]:hover::after {
+.cred-title[title]:hover::after,
+.cred-page-url[title]:hover::after {
   content: attr(title);
   position: absolute;
   left: 0;
@@ -561,11 +588,11 @@ h2 {
   font-size: 9px;
   font-weight: normal;
   border-radius: 3px;
-  white-space: nowrap;
+  white-space: normal;
   z-index: 1000;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: max-content;
+  max-width: 280px;
+  word-break: break-all;
 }
 
 /* 隐藏遗留元素 */

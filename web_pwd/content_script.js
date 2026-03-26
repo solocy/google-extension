@@ -3,8 +3,125 @@
 // 支持自动填充已保存的登录信息
 
 (function () {
+    const SAVE_BANNER_ID = 'webpwd-save-banner';
+    const SAVE_BANNER_STYLE_ID = 'webpwd-save-banner-style';
+    const SAVE_TOAST_ID = 'webpwd-save-toast';
+    const ACCOUNT_SWITCHER_ID = 'webpwd-account-switcher';
+    const SAVE_BANNER_AUTO_CLOSE_MS = 10000;
+
     let autoFillAttempted = false;
     let pendingCredential = null;
+    let currentLocale = 'zh';
+    let accountSwitcherOutsideHandler = null;
+    let currentAutoFilledCredentialKey = null;
+
+    const I18N = {
+        zh: {
+            saveLoginInfo: '保存登录信息？',
+            updatePassword: '更新密码？',
+            site: '网站',
+            username: '用户名',
+            saveToFolder: '保存到文件夹',
+            title: '标题',
+            inputTitle: '输入标题',
+            cancel: '取消',
+            save: '保存',
+            update: '更新',
+            saveSuccess: '登录信息已保存',
+            updateSuccess: '密码已更新',
+            saveFailed: '保存失败，请重试',
+            duplicateCredential: '相同账号密码已保存，本次不再提示。',
+            updatePasswordHint: '检测到同一登录页的该账号密码已变化，是否更新为新密码？',
+            newAccountHint: '检测到新的登录账号，可直接保存到当前页面。',
+            otherAccounts: '其他账号',
+            switchAccount: '切换账号',
+            chooseAccount: '选择账号',
+            currentAccount: '当前',
+            emptyUsername: '(空)',
+            switchedAccount: '已切换账号'
+        },
+        en: {
+            saveLoginInfo: 'Save login info?',
+            updatePassword: 'Update password?',
+            site: 'Site',
+            username: 'Username',
+            saveToFolder: 'Save to folder',
+            title: 'Title',
+            inputTitle: 'Enter title',
+            cancel: 'Cancel',
+            save: 'Save',
+            update: 'Update',
+            saveSuccess: 'Login info saved',
+            updateSuccess: 'Password updated',
+            saveFailed: 'Save failed, please try again',
+            duplicateCredential: 'This username and password are already saved.',
+            updatePasswordHint: 'The password for this account on the same login page has changed. Update it?',
+            newAccountHint: 'A new account was detected on this login page. Save it now.',
+            otherAccounts: 'Other accounts',
+            switchAccount: 'Switch account',
+            chooseAccount: 'Choose an account',
+            currentAccount: 'Current',
+            emptyUsername: '(empty)',
+            switchedAccount: 'Switched account'
+        }
+    };
+
+    /**
+     * 统一包装 runtime 消息发送，便于页面内卡片在保存时等待后台结果。
+     * @param {object} message 发送到后台的消息体。
+     * @returns {Promise<any>} 后台响应。
+     */
+    function sendRuntimeMessage(message) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(message, (response) => {
+                resolve(response);
+            });
+        });
+    }
+
+    /**
+     * 规范化语言值，仅允许中文和英文两种。
+     * @param {string} language 语言标识。
+     */
+    function setLocale(language) {
+        currentLocale = language === 'en' ? 'en' : 'zh';
+    }
+
+    /**
+     * 获取当前语言下的文案。
+     * @param {string} key 文案键名。
+     * @returns {string} 当前语言文案。
+     */
+    function t(key) {
+        return I18N[currentLocale][key] || I18N.zh[key] || key;
+    }
+
+    function removeAccountSwitcher() {
+        const existing = document.getElementById(ACCOUNT_SWITCHER_ID);
+        if (existing) {
+            existing.remove();
+        }
+        if (accountSwitcherOutsideHandler) {
+            document.removeEventListener('click', accountSwitcherOutsideHandler);
+            accountSwitcherOutsideHandler = null;
+        }
+    }
+
+    function getDisplayUsername(username) {
+        return username || t('emptyUsername');
+    }
+
+    function isWebPwdInjectedElement(target) {
+        if (!target || !(target instanceof Element)) {
+            return false;
+        }
+        return !!target.closest(`#${SAVE_BANNER_ID}, #${SAVE_TOAST_ID}, #${ACCOUNT_SWITCHER_ID}`);
+    }
+
+    function getCredentialIdentity(credential) {
+        if (!credential) return '';
+        return `${credential.urlPattern || credential.origin || ''}|${credential.username || ''}`;
+    }
 
     function findUsernameInput(form, passwordInput) {
         const inputs = Array.from(form.querySelectorAll('input'));
@@ -34,6 +151,7 @@
 
     function handleSubmit(e) {
         try {
+            removeAccountSwitcher();
             const form = e.target;
             const passwordInput = form.querySelector('input[type=password]');
             if (passwordInput && passwordInput.value) {
@@ -48,7 +166,7 @@
     // 立即捕获凭证并显示弹窗
     function captureAndShowBanner(passwordInput) {
         if (!passwordInput || !passwordInput.value) return;
-        if (document.getElementById('webpwd-save-banner')) return;
+        if (document.getElementById(SAVE_BANNER_ID)) return;
 
         const form = passwordInput.closest('form') || passwordInput.form || document;
         const usernameInput = findUsernameInput(form, passwordInput);
@@ -81,23 +199,22 @@
             passwordSelector: getSelector(passwordInput)
         };
 
-        // 请求文件夹列表并显示弹窗
+        // 请求文件夹列表并直接在当前页面内展示保存卡片
         chrome.runtime.sendMessage({type: 'loginDetected', ...pendingCredential}, (response) => {
             if (chrome.runtime.lastError) {
                 return;
             }
             if (response) {
-                // 如果是重复凭证（同一账号同一密码），不显示弹窗
+                setLocale(response.settings && response.settings.language);
+                // 如果是重复凭证（同一账号同一密码），不显示通知
                 if (response.isDuplicate) {
                     return;
                 }
 
-                // 正常显示弹窗
-                if (response.folders) {
-                    // 如果存在冲突（同一账号但密码不同），在弹窗中显示提示
-                    pendingCredential.hasConflict = response.hasConflict;
-                    showSaveBanner(pendingCredential, response.folders);
-                }
+                showSaveBanner({
+                    ...pendingCredential,
+                    hasConflict: response.hasConflict
+                }, response.folders || []);
             }
         });
     }
@@ -119,177 +236,662 @@
         return path.length ? path.join(' > ') : null;
     }
 
-    function showSaveBanner(payload, folders) {
-        // 防止重复显示弹窗
-        const existing = document.getElementById('webpwd-save-banner');
-        if (existing) return; // 如果已存在弹窗，不再创建
+    /**
+     * 注入页面内保存卡片所需样式，保证动画和视觉结构只注册一次。
+     */
+    function ensureBannerStyles() {
+        if (document.getElementById(SAVE_BANNER_STYLE_ID)) {
+            return;
+        }
 
-        // 标记弹窗显示，防止页面卸载
-        let bannerShown = true;
-        const unloadHandler = (e) => {
-            if (bannerShown) {
-                e.preventDefault();
-                e.returnValue = '还有未保存的登录信息，确定要离开吗？';
-                return '还有未保存的登录信息，确定要离开吗？';
+        const style = document.createElement('style');
+        style.id = SAVE_BANNER_STYLE_ID;
+        style.textContent = `
+            @keyframes webpwdCardSlideIn {
+                from {
+                    transform: translate3d(112%, 0, 0);
+                    opacity: 0;
+                }
+                to {
+                    transform: translate3d(0, 0, 0);
+                    opacity: 1;
+                }
             }
-        };
-        window.addEventListener('beforeunload', unloadHandler);
+
+            @keyframes webpwdCardSlideOut {
+                from {
+                    transform: translate3d(0, 0, 0);
+                    opacity: 1;
+                }
+                to {
+                    transform: translate3d(112%, 0, 0);
+                    opacity: 0;
+                }
+            }
+
+            #${SAVE_BANNER_ID} {
+                position: fixed;
+                right: 20px;
+                bottom: 20px;
+                z-index: 2147483647;
+                width: min(348px, calc(100vw - 24px));
+                padding: 16px 16px 14px;
+                border: 2px solid #2f80ed;
+                border-radius: 12px;
+                background: #ffffff;
+                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+                color: #333333;
+                font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+                animation: webpwdCardSlideIn 0.24s ease-out;
+            }
+
+            #${SAVE_BANNER_ID}.is-closing {
+                animation: webpwdCardSlideOut 0.2s ease-in forwards;
+            }
+
+            #${SAVE_BANNER_ID} *,
+            #${SAVE_TOAST_ID} {
+                box-sizing: border-box;
+            }
+
+            .webpwd-card-top {
+                position: relative;
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 14px;
+            }
+
+            .webpwd-card-heading {
+                min-width: 0;
+                padding-right: 24px;
+            }
+
+            .webpwd-card-title {
+                margin: 0;
+                color: #1a73e8;
+                font-size: 15px;
+                line-height: 1.4;
+                font-weight: 700;
+            }
+
+            .webpwd-card-close {
+                position: absolute;
+                top: -2px;
+                right: -2px;
+                width: 22px;
+                height: 22px;
+                padding: 0;
+                border: none;
+                background: transparent;
+                color: #8b8b8b;
+                cursor: pointer;
+                font-size: 18px;
+                line-height: 1;
+            }
+
+            .webpwd-card-close:hover {
+                color: #4b4b4b;
+            }
+
+            .webpwd-card-timer {
+                display: none;
+            }
+
+            .webpwd-card-meta {
+                display: block;
+                margin-bottom: 12px;
+            }
+
+            .webpwd-card-meta-row {
+                margin-bottom: 10px;
+            }
+
+            .webpwd-card-meta-row:last-child {
+                margin-bottom: 0;
+            }
+
+            .webpwd-card-label {
+                display: block;
+                margin-bottom: 4px;
+                color: #666666;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .webpwd-card-value {
+                color: #444444;
+                font-size: 13px;
+                line-height: 1.5;
+                word-break: break-word;
+            }
+
+            .webpwd-card-warning {
+                margin-bottom: 12px;
+                padding: 8px 10px;
+                border: 1px solid #ffd38a;
+                border-radius: 6px;
+                background: #fff8ea;
+                color: #a06000;
+                font-size: 12px;
+                line-height: 1.5;
+            }
+
+            .webpwd-card-field {
+                margin-bottom: 12px;
+            }
+
+            .webpwd-card-field label {
+                display: block;
+                margin-bottom: 6px;
+                color: #888888;
+                font-size: 12px;
+                font-weight: 500;
+            }
+
+            .webpwd-card-input,
+            .webpwd-card-select {
+                width: 100%;
+                height: 38px;
+                padding: 8px 12px;
+                border: 1px solid #d9d9d9;
+                border-radius: 4px;
+                background: #ffffff;
+                color: #333333;
+                font-size: 13px;
+                outline: none;
+            }
+
+            .webpwd-card-input:focus,
+            .webpwd-card-select:focus {
+                border-color: #2f80ed;
+                box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.12);
+            }
+
+            .webpwd-card-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-top: 6px;
+            }
+
+            .webpwd-card-btn {
+                min-width: 72px;
+                height: 36px;
+                padding: 0 14px;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background-color 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
+            }
+
+            .webpwd-card-btn:disabled {
+                opacity: 0.65;
+                cursor: default;
+            }
+
+            .webpwd-card-btn-secondary {
+                border: 1px solid #d9d9d9;
+                background: #ffffff;
+                color: #555555;
+            }
+
+            .webpwd-card-btn-secondary:hover:not(:disabled) {
+                background: #f7f7f7;
+            }
+
+            .webpwd-card-btn-primary {
+                border: 1px solid #1a73e8;
+                background: #1a73e8;
+                color: #ffffff;
+            }
+
+            .webpwd-card-btn-primary:hover:not(:disabled) {
+                background: #1765cc;
+                border-color: #1765cc;
+            }
+
+            #${SAVE_TOAST_ID} {
+                position: fixed;
+                right: 20px;
+                bottom: 20px;
+                z-index: 2147483647;
+                padding: 10px 14px;
+                border-radius: 6px;
+                background: rgba(51, 51, 51, 0.96);
+                color: #ffffff;
+                font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+                font-size: 13px;
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+            }
+
+            #${ACCOUNT_SWITCHER_ID} {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 2147483646;
+                min-width: 132px;
+                font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            }
+
+            .webpwd-account-toggle {
+                width: 100%;
+                height: 34px;
+                padding: 0 12px;
+                border: 1px solid #d9d9d9;
+                border-radius: 18px;
+                background: rgba(255, 255, 255, 0.96);
+                color: #333333;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+            }
+
+            .webpwd-account-menu {
+                display: none;
+                margin-top: 8px;
+                padding: 6px;
+                border: 1px solid #d9d9d9;
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.98);
+                box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+            }
+
+            .webpwd-account-menu.is-open {
+                display: block;
+            }
+
+            .webpwd-account-item {
+                display: block;
+                width: 100%;
+                padding: 10px 12px;
+                border: 1px solid #d9d9d9;
+                border-radius: 10px;
+                background: #ffffff;
+                color: #333333;
+                text-align: left;
+                font-size: 13px;
+                cursor: pointer;
+            }
+
+            .webpwd-account-item:hover {
+                background: #f5f8ff;
+                color: #1a73e8;
+                border-color: #bfd6fb;
+            }
+
+            .webpwd-account-item.is-current {
+                border-color: #1a73e8;
+                background: #eef5ff;
+                color: #1a73e8;
+            }
+
+            .webpwd-account-item-label {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+
+            .webpwd-account-current-tag {
+                flex-shrink: 0;
+                padding: 2px 6px;
+                border-radius: 999px;
+                background: #1a73e8;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 700;
+            }
+
+            @media (max-width: 640px) {
+                #${SAVE_BANNER_ID},
+                #${SAVE_TOAST_ID} {
+                    right: 12px;
+                    bottom: 12px;
+                }
+
+                #${ACCOUNT_SWITCHER_ID} {
+                    top: 12px;
+                    right: 12px;
+                }
+
+                #${SAVE_BANNER_ID} {
+                    width: calc(100vw - 24px);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        }
+
+        /**
+         * 把文件夹平铺成带层级缩进的下拉选项，保证页面内卡片与原数据结构一致。
+         * @param {HTMLSelectElement} folderSelect 文件夹下拉框。
+         * @param {Array} folders 文件夹列表。
+         */
+        function appendFolderOptions(folderSelect, folders) {
+        const folderMap = {};
+        folders.forEach((folder) => {
+            folderMap[folder.id] = { folder, children: [] };
+        });
+
+        const rootFolders = [];
+        folders.forEach((folder) => {
+            if (folder.parentId && folderMap[folder.parentId]) {
+            folderMap[folder.parentId].children.push(folderMap[folder.id]);
+            } else {
+            rootFolders.push(folderMap[folder.id]);
+            }
+        });
+
+        function addFolderOptions(node, level) {
+            const option = document.createElement('option');
+            option.value = node.folder.id;
+            option.textContent = `${'  '.repeat(level)}${level > 0 ? '└ ' : ''}${node.folder.name}`;
+            folderSelect.appendChild(option);
+            node.children.forEach((child) => addFolderOptions(child, level + 1));
+        }
+
+        rootFolders.forEach((node) => addFolderOptions(node, 0));
+        }
+
+        /**
+         * 在当前页面右下角渲染固定保存卡片，并在 10 秒后自动退出。
+         * @param {object} payload 待保存的登录信息。
+         * @param {Array} folders 可选文件夹列表。
+         */
+        function showSaveBanner(payload, folders) {
+        const existing = document.getElementById(SAVE_BANNER_ID);
+        if (existing) return;
+
+        ensureBannerStyles();
 
         const banner = document.createElement('div');
-        banner.id = 'webpwd-save-banner';
-        banner.style.cssText = `
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      z-index: 2147483647;
-      background: #fff;
-      border: 2px solid #1a73e8;
-      border-radius: 8px;
-      padding: 16px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
-      min-width: 300px;
-      max-width: 400px;
-    `;
+        banner.id = SAVE_BANNER_ID;
+
+        const safeTitle = document.title || new URL(payload.url).hostname;
+        const expiresAt = Date.now() + SAVE_BANNER_AUTO_CLOSE_MS;
+        let countdownTimer = null;
+        let isClosing = false;
+
+        const closeBanner = () => {
+            if (isClosing) {
+            return;
+            }
+            isClosing = true;
+            clearTimeout(autoCloseTimer);
+            if (countdownTimer) {
+            clearInterval(countdownTimer);
+            }
+            banner.classList.add('is-closing');
+            setTimeout(() => banner.remove(), 260);
+        };
+
+        const autoCloseTimer = setTimeout(() => {
+            closeBanner();
+        }, SAVE_BANNER_AUTO_CLOSE_MS);
+
+        const cardTop = document.createElement('div');
+        cardTop.className = 'webpwd-card-top';
+
+        const heading = document.createElement('div');
+        heading.className = 'webpwd-card-heading';
 
         const title = document.createElement('div');
-        title.textContent = '保存登录信息？';
-        title.style.cssText = 'font-weight: 600; margin-bottom: 12px; font-size: 15px; color: #1a73e8;';
-        banner.appendChild(title);
+        title.className = 'webpwd-card-title';
+        title.textContent = payload.hasConflict ? t('updatePassword') : t('saveLoginInfo');
+        heading.appendChild(title);
+
+        cardTop.appendChild(heading);
+
+        const topActions = document.createElement('div');
+
+        const countdown = document.createElement('div');
+        countdown.className = 'webpwd-card-timer';
+        topActions.appendChild(countdown);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'webpwd-card-close';
+        closeBtn.type = 'button';
+        closeBtn.textContent = '×';
+        closeBtn.onclick = closeBanner;
+        topActions.appendChild(closeBtn);
+        cardTop.appendChild(topActions);
+        banner.appendChild(cardTop);
+
+        const meta = document.createElement('div');
+        meta.className = 'webpwd-card-meta';
+
+        const websiteRow = document.createElement('div');
+        websiteRow.className = 'webpwd-card-meta-row';
+
+        const websiteLabel = document.createElement('div');
+        websiteLabel.className = 'webpwd-card-label';
+        websiteLabel.textContent = t('site');
+        websiteRow.appendChild(websiteLabel);
+
+        const websiteValue = document.createElement('div');
+        websiteValue.className = 'webpwd-card-value';
+        websiteValue.textContent = safeTitle;
+        websiteRow.appendChild(websiteValue);
+        meta.appendChild(websiteRow);
+
+        const userRow = document.createElement('div');
+        userRow.className = 'webpwd-card-meta-row';
+
+        const userLabel = document.createElement('div');
+        userLabel.className = 'webpwd-card-label';
+        userLabel.textContent = t('username');
+        userRow.appendChild(userLabel);
 
         const userInfo = document.createElement('div');
-        userInfo.textContent = `用户名: ${payload.username || '(空)'}`;
-        userInfo.style.cssText = 'color: #666; margin-bottom: 12px; font-size: 13px;';
-        banner.appendChild(userInfo);
+        userInfo.className = 'webpwd-card-value';
+        userInfo.textContent = getDisplayUsername(payload.username);
+        userRow.appendChild(userInfo);
+        meta.appendChild(userRow);
 
-        // 如果存在冲突，显示警告
+        banner.appendChild(meta);
+
         if (payload.hasConflict) {
             const conflictWarning = document.createElement('div');
-            conflictWarning.textContent = '⚠️ 注意：该账号已保存，密码不同。保存后会覆盖之前的密码。';
-            conflictWarning.style.cssText = `
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 8px 10px;
-        border-radius: 4px;
-        margin-bottom: 12px;
-        font-size: 12px;
-      `;
+            conflictWarning.className = 'webpwd-card-warning';
+            conflictWarning.textContent = t('updatePasswordHint');
             banner.appendChild(conflictWarning);
+        } else {
+            const saveHint = document.createElement('div');
+            saveHint.className = 'webpwd-card-warning';
+            saveHint.textContent = t('newAccountHint');
+            banner.appendChild(saveHint);
         }
 
         const folderGroup = document.createElement('div');
-        folderGroup.style.cssText = 'margin-bottom: 12px;';
+        folderGroup.className = 'webpwd-card-field';
 
         const folderLabel = document.createElement('label');
-        folderLabel.textContent = '保存到文件夹: ';
-        folderLabel.style.cssText = 'font-size: 12px; color: #666; display: block; margin-bottom: 6px;';
+        folderLabel.textContent = t('saveToFolder');
         folderGroup.appendChild(folderLabel);
 
         const folderSelect = document.createElement('select');
-        folderSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;';
-
-        // 构建文件夹树形结构用于下拉框显示
-        const folderMap = {};
-        folders.forEach(f => {
-            folderMap[f.id] = { folder: f, children: [] };
-        });
-        const rootFolders = [];
-        folders.forEach(f => {
-            if (f.parentId && folderMap[f.parentId]) {
-                folderMap[f.parentId].children.push(folderMap[f.id]);
-            } else {
-                rootFolders.push(folderMap[f.id]);
-            }
-        });
-
-        // 递归添加选项，带缩进
-        function addFolderOptions(folderData, level) {
-            const { folder, children } = folderData;
-            const option = document.createElement('option');
-            option.value = folder.id;
-            option.textContent = '　'.repeat(level) + (level > 0 ? '└ ' : '') + folder.name;
-            folderSelect.appendChild(option);
-            children.forEach(child => addFolderOptions(child, level + 1));
-        }
-        rootFolders.forEach(f => addFolderOptions(f, 0));
+        folderSelect.className = 'webpwd-card-select';
+        appendFolderOptions(folderSelect, folders);
 
         folderGroup.appendChild(folderSelect);
         banner.appendChild(folderGroup);
 
         const titleGroup = document.createElement('div');
-        titleGroup.style.cssText = 'margin-bottom: 14px;';
+        titleGroup.className = 'webpwd-card-field';
 
         const titleLabel = document.createElement('label');
-        titleLabel.textContent = '标题: ';
-        titleLabel.style.cssText = 'font-size: 12px; color: #666; display: block; margin-bottom: 6px;';
+        titleLabel.textContent = t('title');
         titleGroup.appendChild(titleLabel);
 
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
-        titleInput.placeholder = '输入标题';
-        // 使用页面标题作为默认值，和 Google 书签一样
-        titleInput.value = document.title || new URL(payload.url).hostname;
-        titleInput.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; box-sizing: border-box;';
+        titleInput.className = 'webpwd-card-input';
+        titleInput.placeholder = t('inputTitle');
+        titleInput.value = safeTitle;
         titleGroup.appendChild(titleInput);
         banner.appendChild(titleGroup);
 
         const btnContainer = document.createElement('div');
-        btnContainer.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
+        btnContainer.className = 'webpwd-card-actions';
 
         const btnCancel = document.createElement('button');
-        btnCancel.textContent = '取消';
-        btnCancel.style.cssText = 'padding: 8px 16px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; font-weight: 500;';
-        btnCancel.onmouseover = () => btnCancel.style.background = '#f5f5f5';
-        btnCancel.onmouseout = () => btnCancel.style.background = '#fff';
-        btnCancel.onclick = function () {
-            bannerShown = false;
-            window.removeEventListener('beforeunload', unloadHandler);
-            banner.remove();
-        };
+        btnCancel.type = 'button';
+        btnCancel.textContent = t('cancel');
+        btnCancel.className = 'webpwd-card-btn webpwd-card-btn-secondary';
+        btnCancel.onclick = closeBanner;
         btnContainer.appendChild(btnCancel);
 
         const btnSave = document.createElement('button');
-        btnSave.textContent = '保存';
-        btnSave.style.cssText = 'padding: 8px 16px; border: none; border-radius: 4px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 13px; font-weight: 600;';
-        btnSave.onmouseover = () => btnSave.style.background = '#1557b0';
-        btnSave.onmouseout = () => btnSave.style.background = '#1a73e8';
-        btnSave.onclick = function () {
+        btnSave.type = 'button';
+        btnSave.textContent = payload.hasConflict ? t('update') : t('save');
+        btnSave.className = 'webpwd-card-btn webpwd-card-btn-primary';
+        btnSave.onclick = async function () {
+            clearTimeout(autoCloseTimer);
+            btnSave.disabled = true;
+            btnCancel.disabled = true;
+            closeBtn.disabled = true;
+            folderSelect.disabled = true;
+            titleInput.disabled = true;
+
             const credentialData = Object.assign({}, payload, {
-                folderId: folderSelect.value,
-                title: titleInput.value.trim() || payload.origin
+            folderId: folderSelect.value,
+            title: titleInput.value.trim() || payload.origin
             });
-            chrome.runtime.sendMessage({type: 'storeCredential', credential: credentialData});
-            bannerShown = false;
-            window.removeEventListener('beforeunload', unloadHandler);
-            banner.remove();
-            showToast('登录信息已保存');
+
+            const response = await sendRuntimeMessage({type: 'storeCredential', credential: credentialData});
+            if (!response || response.success === false) {
+            btnSave.disabled = false;
+            btnCancel.disabled = false;
+            closeBtn.disabled = false;
+            folderSelect.disabled = false;
+            titleInput.disabled = false;
+                showToast(t('saveFailed'));
+            return;
+            }
+
+            closeBanner();
+            showToast(payload.hasConflict ? t('updateSuccess') : t('saveSuccess'));
         };
         btnContainer.appendChild(btnSave);
 
         banner.appendChild(btnContainer);
-        document.body.appendChild(banner);
+
+        function updateCountdown() {
+            const remainingMs = Math.max(0, expiresAt - Date.now());
+            countdown.textContent = `${(remainingMs / 1000).toFixed(1)}s`;
+        }
+
+        updateCountdown();
+        countdownTimer = setInterval(updateCountdown, 100);
+        (document.body || document.documentElement).appendChild(banner);
+        }
+
+        /**
+         * 在页面右下角显示轻量提示，反馈保存结果。
+         * @param {string} message 提示内容。
+         */
+        function showToast(message) {
+        const existingToast = document.getElementById(SAVE_TOAST_ID);
+        if (existingToast) {
+            existingToast.remove();
+        }
+
+        ensureBannerStyles();
+
+        const toast = document.createElement('div');
+        toast.id = SAVE_TOAST_ID;
+        toast.textContent = message;
+        (document.body || document.documentElement).appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+        }
+
+    /**
+     * 当同一登录页保存了多个账号时，在右上角展示精简的账号切换入口。
+     * @param {Array} credentials 当前登录页可用账号列表。
+     */
+    function showAccountSwitcher(credentials) {
+        removeAccountSwitcher();
+        if (!Array.isArray(credentials) || credentials.length <= 1) {
+            return;
+        }
+
+        ensureBannerStyles();
+
+        const switcher = document.createElement('div');
+        switcher.id = ACCOUNT_SWITCHER_ID;
+
+        const toggleButton = document.createElement('button');
+        toggleButton.type = 'button';
+        toggleButton.className = 'webpwd-account-toggle';
+        toggleButton.textContent = t('switchAccount');
+        switcher.appendChild(toggleButton);
+
+        const menu = document.createElement('div');
+        menu.className = 'webpwd-account-menu';
+
+        credentials.forEach((credential) => {
+            const isCurrent = getCredentialIdentity(credential) === currentAutoFilledCredentialKey;
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = `webpwd-account-item${isCurrent ? ' is-current' : ''}`;
+
+            const itemLabel = document.createElement('span');
+            itemLabel.className = 'webpwd-account-item-label';
+
+            const usernameText = document.createElement('span');
+            usernameText.textContent = getDisplayUsername(credential.username);
+            itemLabel.appendChild(usernameText);
+
+            if (isCurrent) {
+                const currentTag = document.createElement('span');
+                currentTag.className = 'webpwd-account-current-tag';
+                currentTag.textContent = t('currentAccount');
+                itemLabel.appendChild(currentTag);
+            }
+
+            item.appendChild(itemLabel);
+            item.onclick = () => {
+                currentAutoFilledCredentialKey = getCredentialIdentity(credential);
+                fillCredentialDirectly(credential, false);
+                removeAccountSwitcher();
+                showAccountSwitcher(credentials);
+                showToast(`${t('switchedAccount')}: ${getDisplayUsername(credential.username)}`);
+            };
+            menu.appendChild(item);
+        });
+        switcher.appendChild(menu);
+
+        toggleButton.onclick = (event) => {
+            event.stopPropagation();
+            menu.classList.toggle('is-open');
+        };
+
+        accountSwitcherOutsideHandler = (event) => {
+            if (!switcher.contains(event.target)) {
+                menu.classList.remove('is-open');
+            }
+        };
+        setTimeout(() => {
+            if (accountSwitcherOutsideHandler) {
+                document.addEventListener('click', accountSwitcherOutsideHandler);
+            }
+        }, 0);
+
+        (document.body || document.documentElement).appendChild(switcher);
     }
 
-    function showToast(message) {
-        const toast = document.createElement('div');
-        toast.textContent = message;
-        toast.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      z-index: 2147483647;
-      background: #323232;
-      color: #fff;
-      padding: 12px 20px;
-      border-radius: 4px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    `;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+    function applyDefaultCredential(credentials) {
+        if (!Array.isArray(credentials) || credentials.length === 0) {
+            return;
+        }
+
+        currentAutoFilledCredentialKey = getCredentialIdentity(credentials[0]);
+        fillCredentialDirectly(credentials[0], false);
+        showAccountSwitcher(credentials);
     }
 
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -356,6 +958,10 @@
         const btn = e.target.closest('button, input[type="submit"], a, [role="button"]');
         if (!btn) return;
 
+        if (isWebPwdInjectedElement(btn)) return;
+
+        removeAccountSwitcher();
+
         // 找到相关的密码输入框
         const form = btn.closest('form');
         let passwordInput = null;
@@ -379,6 +985,8 @@
         const target = e.target;
         if (!target) return;
 
+        if (isWebPwdInjectedElement(target)) return;
+
         // 检查是否点击了可能的登录按钮
         const btn = target.closest('button, input[type="submit"], a, [role="button"]');
         if (!btn) return;
@@ -389,6 +997,8 @@
         const isLoginBtn = commonLoginWords.some(word => text.includes(word));
 
         if (!isLoginBtn) return;
+
+        removeAccountSwitcher();
 
         // 找到密码框
         const form = btn.closest('form');
@@ -415,7 +1025,7 @@
         if (!pwd) return;
 
         chrome.runtime.sendMessage({
-            type: 'findCredential',
+            type: 'findCredentialsForPage',
             origin: window.location.origin,
             url: window.location.href
         }, (response) => {
@@ -423,9 +1033,12 @@
             if (chrome.runtime.lastError) {
                 return;
             }
-            if (response && response.credential && response.settings && response.settings.autoFillEnabled) {
-                // 直接填充，不需要再发消息
-                fillCredentialDirectly(response.credential, false);
+            if (response && response.settings) {
+                setLocale(response.settings.language);
+            }
+            if (response && Array.isArray(response.credentials) && response.credentials.length > 0 && response.settings && response.settings.autoFillEnabled) {
+                // 同一登录页默认填充第一个账号，并在有多个账号时显示下拉切换入口
+                applyDefaultCredential(response.credentials);
             }
         });
     }
@@ -502,6 +1115,9 @@
     } else {
         setTimeout(tryAutoFill, 300);
     }
+
+    window.addEventListener('pagehide', removeAccountSwitcher);
+    window.addEventListener('beforeunload', removeAccountSwitcher);
 
 
 })();

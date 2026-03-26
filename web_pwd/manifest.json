@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebPwd - 密码管理器",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "安全记录网页登录信息，支持自动填充、文件夹管理，所有数据本地存储。",
   "icons": {
     "16": "images/icon16.png",

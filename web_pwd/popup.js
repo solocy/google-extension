@@ -20,6 +20,120 @@ async function sendMessage(msg) {
   return new Promise((res) => chrome.runtime.sendMessage(msg, (r) => res(r)));
 }
 
+const I18N = {
+  zh: {
+    appTitle: 'WebPwd',
+    newFolder: '📁 新建',
+    autoFill: '自动填充',
+    language: '语言',
+    folderPlaceholder: '输入文件夹名称...',
+    subfolderPlaceholder: '输入子文件夹名称...',
+    cannotConnect: '无法连接到扩展后台',
+    refreshRetry: '请刷新页面重试',
+    noSavedSites: '暂无保存的网站',
+    noFolders: '暂无文件夹',
+    createFolderHint: '点击"新建文件夹"创建',
+    addSubfolder: '+ 子文件夹',
+    delete: '删除',
+    noUsername: '(无用户名)',
+    hide: '隐藏',
+    show: '显示',
+    edit: '修改',
+    fill: '填充',
+    fillLogin: '填充登录',
+    open: '打开',
+    noActiveTab: '没有活动标签页',
+    fillFailed: '填充失败',
+    fillUnsupported: '填充失败：页面未加载完成或不支持',
+    filled: '已填充',
+    filledAndLogin: '已填充并尝试登录',
+    openingAndLogin: '正在打开并登录...',
+    openFailed: '打开失败',
+    deleteCredentialConfirm: '确定要删除这个登录信息吗？',
+    deleted: '已删除',
+    updatePasswordPrompt: '请输入新密码:',
+    passwordUnchanged: '密码未修改',
+    passwordUpdated: '密码已更新',
+    deleteFolderConfirm: '确定要删除文件夹"{name}"吗？\n该文件夹下的登录信息不会被删除，将移到默认文件夹。',
+    folderDeleted: '文件夹已删除',
+    deleteFailed: '删除失败',
+    enterFolderName: '请输入文件夹名称',
+    subfolderCreated: '子文件夹已创建',
+    folderCreated: '文件夹已创建',
+    autoFillEnabled: '已启用自动填充',
+    autoFillDisabled: '已禁用自动填充',
+    movedToFolder: '已移动到目标文件夹',
+    pageUrlLabel: '登录页',
+    defaultFolder: '默认'
+  },
+  en: {
+    appTitle: 'WebPwd',
+    newFolder: '📁 New',
+    autoFill: 'Auto fill',
+    language: 'Language',
+    folderPlaceholder: 'Enter folder name...',
+    subfolderPlaceholder: 'Enter subfolder name...',
+    cannotConnect: 'Unable to connect to extension backend',
+    refreshRetry: 'Refresh the page and try again',
+    noSavedSites: 'No saved sites',
+    noFolders: 'No folders yet',
+    createFolderHint: 'Click "New" to create one',
+    addSubfolder: '+ Subfolder',
+    delete: 'Delete',
+    noUsername: '(no username)',
+    hide: 'Hide',
+    show: 'Show',
+    edit: 'Edit',
+    fill: 'Fill',
+    fillLogin: 'Fill & Login',
+    open: 'Open',
+    noActiveTab: 'No active tab',
+    fillFailed: 'Fill failed',
+    fillUnsupported: 'Fill failed: page not ready or unsupported',
+    filled: 'Filled',
+    filledAndLogin: 'Filled and attempted login',
+    openingAndLogin: 'Opening and logging in...',
+    openFailed: 'Open failed',
+    deleteCredentialConfirm: 'Delete this login entry?',
+    deleted: 'Deleted',
+    updatePasswordPrompt: 'Enter new password:',
+    passwordUnchanged: 'Password unchanged',
+    passwordUpdated: 'Password updated',
+    deleteFolderConfirm: 'Delete folder "{name}"?\nEntries in this folder will be moved to the default folder.',
+    folderDeleted: 'Folder deleted',
+    deleteFailed: 'Delete failed',
+    enterFolderName: 'Enter a folder name',
+    subfolderCreated: 'Subfolder created',
+    folderCreated: 'Folder created',
+    autoFillEnabled: 'Auto fill enabled',
+    autoFillDisabled: 'Auto fill disabled',
+    movedToFolder: 'Moved to target folder',
+    pageUrlLabel: 'Login page',
+    defaultFolder: 'Default'
+  }
+};
+
+let currentLocale = 'zh';
+let currentSettings = { autoFillEnabled: true, language: 'zh' };
+
+function setLocale(language) {
+  currentLocale = language === 'en' ? 'en' : 'zh';
+}
+
+function t(key, params = {}) {
+  const template = I18N[currentLocale][key] || I18N.zh[key] || key;
+  return Object.keys(params).reduce((text, name) => text.replace(`{${name}}`, params[name]), template);
+}
+
+function applyLocale() {
+  document.getElementById('app-title').textContent = t('appTitle');
+  document.getElementById('btn-new-folder').textContent = t('newFolder');
+  document.getElementById('auto-fill-label').textContent = t('autoFill');
+  document.getElementById('language-label').textContent = t('language');
+  document.getElementById('new-folder-input').placeholder = currentParentId ? t('subfolderPlaceholder') : t('folderPlaceholder');
+  document.getElementById('language-select').value = currentLocale;
+}
+
 // 记录文件夹展开状态
 const folderExpandState = {};
 
@@ -30,12 +144,15 @@ let draggedType = null; // 'folder' or 'credential'
 async function refresh() {
   const r = await sendMessage({ type: 'listCredentials' });
   if (!r) {
-    document.getElementById('credentials').innerHTML = '<div class="empty-state">无法连接到扩展后台<br><small>请刷新页面重试</small></div>';
+    document.getElementById('credentials').innerHTML = `<div class="empty-state">${t('cannotConnect')}<br><small>${t('refreshRetry')}</small></div>`;
     return;
   }
   const creds = r.credentials || [];
   const folders = r.folders || [];
   const settings = r.settings || { autoFillEnabled: true };
+  currentSettings = settings;
+  setLocale(settings.language);
+  applyLocale();
 
   const container = document.getElementById('credentials');
   container.innerHTML = '';
@@ -175,7 +292,8 @@ async function refresh() {
     const arrow = el('span', { class: 'folder-arrow' }, '▼');
 
     // 文件夹名称
-    const nameSpan = el('span', { class: 'folder-name' }, folder.name);
+    const displayFolderName = (!folder.parentId && folder.name === '默认') ? t('defaultFolder') : folder.name;
+    const nameSpan = el('span', { class: 'folder-name' }, displayFolderName);
 
     // 数量标签
     const countSpan = el('span', { class: 'folder-count' }, `${credentials.length}`);
@@ -189,7 +307,7 @@ async function refresh() {
         e.stopPropagation();
         createSubFolder(folder.id);
       }
-    }, '+ 子文件夹');
+    }, t('addSubfolder'));
 
     const deleteBtn = el('button', {
       class: 'btn-delete-folder',
@@ -197,7 +315,7 @@ async function refresh() {
         e.stopPropagation();
         deleteFolder(folder.id, folder.name);
       }
-    }, '删除');
+    }, t('delete'));
 
     actions.appendChild(addSubBtn);
     actions.appendChild(deleteBtn);
@@ -224,7 +342,7 @@ async function refresh() {
     });
 
     if (credentials.length === 0 && children.length === 0) {
-      const emptyNote = el('div', { class: 'folder-empty' }, '暂无保存的网站');
+      const emptyNote = el('div', { class: 'folder-empty' }, t('noSavedSites'));
       credList.appendChild(emptyNote);
     } else {
       credentials.forEach((c) => {
@@ -274,11 +392,14 @@ async function refresh() {
         });
 
         // 标题行 - 添加tooltip显示源网站
-        const titleEl = el('div', { class: 'cred-title', title: c.origin || c.urlPattern || '' }, c.title || c.origin);
+        const titleEl = el('div', { class: 'cred-title', title: c.urlPattern || c.origin || '' }, c.title || c.origin);
         item.appendChild(titleEl);
 
+        const pageUrlEl = el('div', { class: 'cred-page-url', title: c.urlPattern || c.origin || '' }, `${t('pageUrlLabel')}: ${c.urlPattern || c.origin || ''}`);
+        item.appendChild(pageUrlEl);
+
         // 用户名行
-        const usernameEl = el('div', { class: 'cred-username' }, c.username || '(无用户名)');
+        const usernameEl = el('div', { class: 'cred-username' }, c.username || t('noUsername'));
         item.appendChild(usernameEl);
 
         // 密码行
@@ -296,14 +417,14 @@ async function refresh() {
             if (isHidden) {
               passwordValue.textContent = passwordValue.dataset.password;
               passwordValue.dataset.hidden = 'false';
-              togglePwdBtn.textContent = '隐藏';
+              togglePwdBtn.textContent = t('hide');
             } else {
               passwordValue.textContent = '••••••••';
               passwordValue.dataset.hidden = 'true';
-              togglePwdBtn.textContent = '显示';
+              togglePwdBtn.textContent = t('show');
             }
           }
-        }, '显示');
+        }, t('show'));
 
         const editPwdBtn = el('button', {
           class: 'btn-edit-pwd',
@@ -311,7 +432,7 @@ async function refresh() {
             e.stopPropagation();
             editPassword(c);
           }
-        }, '修改');
+        }, t('edit'));
 
         passwordRow.appendChild(passwordLabel);
         passwordRow.appendChild(passwordValue);
@@ -321,10 +442,10 @@ async function refresh() {
 
         // 操作按钮行
         const actionsEl = el('div', { class: 'cred-actions' },
-          el('button', { onclick: () => fillCredential(c, false), class: 'btn-fill' }, '填充'),
-          el('button', { onclick: () => fillCredential(c, true), class: 'btn-fill-login' }, '填充登录'),
-          el('button', { onclick: () => openAndLogin(c), class: 'btn-open' }, '打开'),
-          el('button', { onclick: () => deleteCredential(c.id), class: 'btn-delete' }, '删除')
+          el('button', { onclick: () => fillCredential(c, false), class: 'btn-fill' }, t('fill')),
+          el('button', { onclick: () => fillCredential(c, true), class: 'btn-fill-login' }, t('fillLogin')),
+          el('button', { onclick: () => openAndLogin(c), class: 'btn-open' }, t('open')),
+          el('button', { onclick: () => deleteCredential(c.id), class: 'btn-delete' }, t('delete'))
         );
         item.appendChild(actionsEl);
 
@@ -353,7 +474,7 @@ async function refresh() {
 
   // 如果没有任何文件夹
   if (folders.length === 0) {
-    container.innerHTML = '<div class="empty-state">暂无文件夹<br><small>点击"新建文件夹"创建</small></div>';
+    container.innerHTML = `<div class="empty-state">${t('noFolders')}<br><small>${t('createFolderHint')}</small></div>`;
   }
 
   document.getElementById('auto-fill').checked = !!settings.autoFillEnabled;
@@ -382,7 +503,7 @@ async function moveCredentialToFolder(credId, folderId) {
     id: credId,
     updates: { folderId }
   });
-  showStatus('已移动到目标文件夹', true);
+  showStatus(t('movedToFolder'), true);
   refresh();
 }
 
@@ -400,17 +521,17 @@ async function reorderCredential(draggedId, targetId, folderId) {
 async function fillCredential(credential, submit) {
   const tabs = await new Promise(res => chrome.tabs.query({ active: true, currentWindow: true }, res));
   if (!tabs || !tabs[0]) {
-    showStatus('没有活动标签页', false);
+    showStatus(t('noActiveTab'), false);
     return;
   }
   const tabId = tabs[0].id;
 
   chrome.tabs.sendMessage(tabId, { type: 'fillCredential', credential, submit }, (resp) => {
     if (chrome.runtime.lastError) {
-      showStatus('填充失败：页面未加载完成或不支持', false);
+      showStatus(t('fillUnsupported'), false);
       return;
     }
-    showStatus(resp && resp.success ? (submit ? '已填充并尝试登录' : '已填充') : '填充失败', resp && resp.success);
+    showStatus(resp && resp.success ? (submit ? t('filledAndLogin') : t('filled')) : t('fillFailed'), resp && resp.success);
   });
 }
 
@@ -426,21 +547,21 @@ function showStatus(text, success = true) {
 
 async function openAndLogin(credential) {
   const result = await sendMessage({ type: 'openCredential', credential, submit: true });
-  showStatus(result && result.success ? '正在打开并登录...' : '打开失败', result && result.success);
+  showStatus(result && result.success ? t('openingAndLogin') : t('openFailed'), result && result.success);
 }
 
 async function deleteCredential(id) {
-  if (!confirm('确定要删除这个登录信息吗？')) return;
+  if (!confirm(t('deleteCredentialConfirm'))) return;
   await sendMessage({ type: 'deleteCredential', id });
-  showStatus('已删除', true);
+  showStatus(t('deleted'), true);
   refresh();
 }
 
 async function editPassword(credential) {
-  const newPassword = prompt('请输入新密码:', credential.password || '');
+  const newPassword = prompt(t('updatePasswordPrompt'), credential.password || '');
   if (newPassword === null) return; // 用户取消
   if (newPassword === credential.password) {
-    showStatus('密码未修改', true);
+    showStatus(t('passwordUnchanged'), true);
     return;
   }
 
@@ -449,20 +570,20 @@ async function editPassword(credential) {
     id: credential.id,
     updates: { password: newPassword }
   });
-  showStatus('密码已更新', true);
+  showStatus(t('passwordUpdated'), true);
   refresh();
 }
 
 async function deleteFolder(folderId, folderName) {
-  const message = `确定要删除文件夹"${folderName}"吗？\n该文件夹下的登录信息不会被删除，将移到默认文件夹。`;
+  const message = t('deleteFolderConfirm', { name: folderName });
   if (!confirm(message)) return;
 
   const result = await sendMessage({ type: 'deleteFolder', folderId });
   if (result && result.success) {
-    showStatus('文件夹已删除', true);
+    showStatus(t('folderDeleted'), true);
     refresh();
   } else {
-    showStatus('删除失败', false);
+    showStatus(t('deleteFailed'), false);
   }
 }
 
@@ -476,7 +597,7 @@ function showNewFolderForm(parentId = null) {
   const input = document.getElementById('new-folder-input');
   form.style.display = 'flex';
   input.value = '';
-  input.placeholder = parentId ? '输入子文件夹名称...' : '输入文件夹名称...';
+  input.placeholder = parentId ? t('subfolderPlaceholder') : t('folderPlaceholder');
   input.focus();
 }
 
@@ -492,13 +613,13 @@ async function confirmCreateFolder() {
   const input = document.getElementById('new-folder-input');
   const name = input.value.trim();
   if (!name) {
-    showStatus('请输入文件夹名称', false);
+    showStatus(t('enterFolderName'), false);
     input.focus();
     return;
   }
 
   await sendMessage({ type: 'createFolder', name, parentId: currentParentId });
-  showStatus(currentParentId ? '子文件夹已创建' : '文件夹已创建', true);
+  showStatus(currentParentId ? t('subfolderCreated') : t('folderCreated'), true);
   hideNewFolderForm();
   refresh();
 }
@@ -510,7 +631,19 @@ function createSubFolder(parentId) {
 
 async function toggleAutoFill(e) {
   await sendMessage({ type: 'updateSettings', settings: { autoFillEnabled: e.target.checked } });
-  showStatus(e.target.checked ? '已启用自动填充' : '已禁用自动填充', true);
+  currentSettings.autoFillEnabled = e.target.checked;
+  showStatus(e.target.checked ? t('autoFillEnabled') : t('autoFillDisabled'), true);
+}
+
+async function toggleLanguage(e) {
+  const language = e.target.value === 'en' ? 'en' : 'zh';
+  const result = await sendMessage({ type: 'updateSettings', settings: { language } });
+  if (result && result.settings) {
+    currentSettings = result.settings;
+    setLocale(result.settings.language);
+    applyLocale();
+    refresh();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -533,5 +666,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('auto-fill').addEventListener('change', toggleAutoFill);
+  document.getElementById('language-select').addEventListener('change', toggleLanguage);
   refresh();
 });
